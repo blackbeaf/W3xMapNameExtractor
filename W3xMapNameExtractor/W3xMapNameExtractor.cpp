@@ -10,13 +10,16 @@
 
 using namespace std;
 typedef basic_string<TCHAR> tstring;
-typedef unordered_map<tstring, tstring> HashFileName2MapName;
+typedef unordered_map<tstring, tstring> HashTstring2Tstring;
+typedef unordered_map<tstring, vector<tstring>> HashTstring2VectorTstring;
 
 /************************************************************************/
 /*utility function                                                      */
 /************************************************************************/
 
-template<int SIZE>
+#define LEN_1K 1024
+
+template<int SIZE=LEN_1K>
 inline tstring format(const TCHAR* fmt, ...)
 {
     TCHAR str[SIZE] = { 0 };
@@ -26,8 +29,6 @@ inline tstring format(const TCHAR* fmt, ...)
     va_end(arg);
     return tstring(str);
 }
-
-#define LEN_1K 1024
 
 inline tstring GetYMDHMS(time_t ts = time(NULL))
 {
@@ -64,7 +65,7 @@ bool WithSuffix(const TCHAR *file, const TCHAR* suffix)
     return 0==_tcsicmp(file, suffix);
 }
 
-void ExtractMapName(const TCHAR* file, HashFileName2MapName &result)
+void ExtractMapName(const TCHAR* file, HashTstring2Tstring &file2map, HashTstring2VectorTstring &map2file)
 {
     HANDLE hfile = CreateFile(file, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (INVALID_HANDLE_VALUE ==hfile)
@@ -89,11 +90,21 @@ void ExtractMapName(const TCHAR* file, HashFileName2MapName &result)
     MultiByteToWideChar(CP_UTF8, 0, ((const char*)mapName)+8, -1, utf8, LEN_1K);
 
     tstring newname(utf8);
-    newname.erase(remove(newname.begin(), newname.end(), _T('|')), newname.end());
-    //newname += _T("---");
-    //newname += file;
-    newname += _T(".w3x");
-    result[file] = newname;
+    newname.erase(remove_if(newname.begin(), newname.end(),
+        [](TCHAR t) {return _tcschr(_T("\\/:*?\"<>|\r\n"), t) != NULL; }), newname.end());
+    file2map[file] = newname;
+    map2file[newname].push_back(file);
+}
+
+void NormalColor()
+{
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_RED |
+        FOREGROUND_GREEN | FOREGROUND_BLUE);
+}
+
+void RedColor()
+{
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_RED);
 }
 
 int main()
@@ -119,7 +130,9 @@ int main()
         return -1;
     }
 
-    HashFileName2MapName result;
+    HashTstring2Tstring result;
+    HashTstring2VectorTstring duplicatemap;
+
     do 
     {
         if (wfd.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)
@@ -132,20 +145,51 @@ int main()
             continue;
         }
 
-        ExtractMapName(wfd.cFileName, result);
+        ExtractMapName(wfd.cFileName, result, duplicatemap);
     } while (FindNextFile(hfind, &wfd));
     FindClose(hfind);
 
-    unsigned count = 0;
+    if (result.empty())
+    {
+        RedColor();
+        log("no w3x files found");
+        NormalColor();
+        return -1;
+    }
+
+    unsigned countOk = 0,countFail=0;
     for (auto i=result.begin();i!=result.end();++i)
     {
-        if (MoveFile(i->first.c_str(), i->second.c_str()))
+        //put the suffix -0, -1, -2, ... to the duplicate map files.
+        tstring finalname = i->second;
+        unsigned index = 0;
+        const vector<tstring>& files = duplicatemap[finalname];
+        if (files.size()>1)
         {
-            log(" [%u] rename file %-40s to %s ok", ++count, i->first.c_str(), i->second.c_str());
+            for (;index<files.size();++index)
+            {
+                if (i->first==files[index])
+                {
+                    break;
+                }
+            }
+
+            finalname += _T("-");
+            finalname += format(_T("%u"), index);
+        }
+
+        finalname += _T(".w3x");
+        if (MoveFile(i->first.c_str(), finalname.c_str()))
+        {
+            log(" [%u] rename file %-40s to %s ok", ++countOk, i->first.c_str(), finalname.c_str());
         }
         else
         {
-            log(" [%u] rename file %-40s to %s fail", ++count, i->first.c_str(), i->second.c_str());
+            RedColor();
+            log(" [%u] rename file %-40s to %s fail", ++countFail, i->first.c_str(), finalname.c_str());
+            NormalColor();
         }
     }
+
+    log("Extraction completed. %u succeed, %u failed", countOk, countFail);
 }
