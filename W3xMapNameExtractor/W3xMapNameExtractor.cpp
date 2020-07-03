@@ -34,7 +34,7 @@ inline tstring GetYMDHMS(time_t ts = time(NULL))
 {
     SYSTEMTIME st;
     GetLocalTime(&st);
-    return format<LEN_1K>(_T("%u-%02u-%02u %02u:%02u:%02u"),
+    return format(_T("%u-%02u-%02u %02u:%02u:%02u"),
         st.wYear, st.wMonth, st.wDay,
         st.wHour, st.wMinute, st.wSecond);
 }
